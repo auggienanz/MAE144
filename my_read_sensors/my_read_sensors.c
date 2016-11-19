@@ -8,10 +8,15 @@
 #include <roboticscape-usefulincludes.h>
 #include <roboticscape.h>
 
+#define IMU_SAMPLE_RATE 5
+
 
 // function declarations
 int on_pause_pressed();
 int on_pause_released();
+int on_imu_data();
+
+imu_data_t imu_data;
 
 
 /*******************************************************************************
@@ -31,8 +36,16 @@ int main(){
 	set_pause_pressed_func(&on_pause_pressed);
 	set_pause_released_func(&on_pause_released);
 
+	// Set up IMU
+	imu_config_t imu_config = get_default_imu_config();
+	imu_config.dmp_sample_rate = IMU_SAMPLE_RATE;
+
+	set_imu_interrrupt_func(&on_imu_data);
+
+	initialize_imu_dmp(*imu_data, imu_config);
+
 	// done initializing so set state to RUNNING
-	set_state(RUNNING); 
+	set_state(RUNNING);
 
 	// Keep looping until state changes to EXITING
 	while(get_state()!=EXITING){
@@ -52,6 +65,7 @@ int main(){
 	}
 	
 	// exit cleanly
+	power_down_imu();
 	cleanup_cape(); 
 	return 0;
 }
@@ -88,4 +102,14 @@ int on_pause_pressed(){
 	printf("long press detected, shutting down\n");
 	set_state(EXITING);
 	return 0;
+}
+
+int on_imu_data() {
+	if(read_accel_data(&imu_data)<0)
+		printf('Error reading accel data\n');
+	else {
+		printf("%6.2f %6.2f %6.2f |",	imu_data.accel[0],\
+										imu_data.accel[1],\
+										imu_data.accel[2]);
+	}
 }
