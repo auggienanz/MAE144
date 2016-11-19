@@ -8,7 +8,7 @@
 #include <roboticscape-usefulincludes.h>
 #include <roboticscape.h>
 
-#define IMU_SAMPLE_RATE 5
+#define IMU_SAMPLE_RATE 20
 
 
 // function declarations
@@ -40,9 +40,11 @@ int main(){
 	imu_config_t imu_config = get_default_imu_config();
 	imu_config.dmp_sample_rate = IMU_SAMPLE_RATE;
 
-	set_imu_interrrupt_func(&on_imu_data);
+	if(initialize_imu_dmp(&imu_data, imu_config)<0) {
+		printf("Error initializing IMU");
+	}
 
-	initialize_imu_dmp(*imu_data, imu_config);
+	set_imu_interrupt_func(&on_imu_data);
 
 	// done initializing so set state to RUNNING
 	set_state(RUNNING);
@@ -61,11 +63,11 @@ int main(){
 			set_led(RED, ON);
 		}
 		// always sleep at some point
-		usleep(100000);
+		usleep(1000);
 	}
 	
 	// exit cleanly
-	power_down_imu();
+	power_off_imu();
 	cleanup_cape(); 
 	return 0;
 }
@@ -77,7 +79,7 @@ int main(){
 * Make the Pause button toggle between paused and running states.
 *******************************************************************************/
 int on_pause_released(){
-	// toggle betewen paused and running modes
+	// toggle between paused and running modes
 	if(get_state()==RUNNING)   		set_state(PAUSED);
 	else if(get_state()==PAUSED)	set_state(RUNNING);
 	return 0;
@@ -105,11 +107,13 @@ int on_pause_pressed(){
 }
 
 int on_imu_data() {
-	if(read_accel_data(&imu_data)<0)
-		printf('Error reading accel data\n');
-	else {
-		printf("%6.2f %6.2f %6.2f |",	imu_data.accel[0],\
-										imu_data.accel[1],\
-										imu_data.accel[2]);
-	}
+	printf("\r");
+	printf(" ");
+	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
+	printf(" %6.2f %6.2f %6.2f %6.2f|",	imu_data.accel[0],\
+					imu_data.accel[1],\
+					imu_data.accel[2],\
+					angle);
+	fflush(stdout);
+	return 0;
 }
