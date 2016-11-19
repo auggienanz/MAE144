@@ -1,7 +1,7 @@
 /*******************************************************************************
 * my_read_sensors.c
 *
-* This is meant to be a domonstration of reading IMU data from the Robotics 
+* This is meant to be a demonstration of reading IMU data from the Robotics 
 * Cape.
 *******************************************************************************/
 
@@ -17,6 +17,8 @@ int on_pause_released();
 int on_imu_data();
 
 imu_data_t imu_data;
+int gyro_initialized;
+float gyro_angle;
 
 
 /*******************************************************************************
@@ -43,7 +45,9 @@ int main(){
 	if(initialize_imu_dmp(&imu_data, imu_config)<0) {
 		printf("Error initializing IMU");
 	}
-
+	gyro_initialized = 0;
+	printf("  Accel | Gyro  \n");
+	fflush(stdout);
 	set_imu_interrupt_func(&on_imu_data);
 
 	// done initializing so set state to RUNNING
@@ -108,12 +112,15 @@ int on_pause_pressed(){
 
 int on_imu_data() {
 	printf("\r");
-	printf(" ");
 	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
-	printf(" %6.2f %6.2f %6.2f %6.2f|",	imu_data.accel[0],\
-					imu_data.accel[1],\
-					imu_data.accel[2],\
-					angle);
+	if (!gyro_initialized) {
+		gyro_angle = angle;
+		gyro_initialized = 1;
+	} else {
+		gyro_angle += (imu_data.gyro[0] * M_PI/180)/IMU_SAMPLE_RATE;
+	}
+	printf(" %6.2f %6.2f ",	angle,\
+					gyro_angle);
 	fflush(stdout);
 	return 0;
 }
