@@ -34,7 +34,6 @@ int main(){
 	initialize_cape();
 
 	// do your own initialization here
-	printf("\nHello BeagleBone\n");
 	set_pause_pressed_func(&on_pause_pressed);
 	set_pause_released_func(&on_pause_released);
 
@@ -44,9 +43,10 @@ int main(){
 
 	if(initialize_imu_dmp(&imu_data, imu_config)<0) {
 		printf("Error initializing IMU");
+		return -1;
 	}
 	gyro_initialized = 0;
-	printf("  Accel | Gyro  \n");
+	printf("Accel,Gyro\r\n");
 	fflush(stdout);
 	set_imu_interrupt_func(&on_imu_data);
 
@@ -111,7 +111,6 @@ int on_pause_pressed(){
 }
 
 int on_imu_data() {
-	printf("\r");
 	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
 	if (!gyro_initialized) {
 		gyro_angle = angle;
@@ -119,7 +118,7 @@ int on_imu_data() {
 	} else {
 		gyro_angle += (imu_data.gyro[0] * M_PI/180)/IMU_SAMPLE_RATE;
 	}
-	printf(" %6.2f %6.2f ",	angle,\
+	printf("%f,%f\r\n",	angle,\
 					gyro_angle);
 	fflush(stdout);
 	return 0;
