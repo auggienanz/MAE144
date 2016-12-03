@@ -21,7 +21,7 @@ imu_data_t imu_data;
 int gyro_initialized;
 float gyro_angle;
 
-float tau = 0.05;
+float tau = 0.5;
 float dt = .01;
 
 float prev_output_lp = 0;
