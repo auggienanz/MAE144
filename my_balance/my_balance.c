@@ -15,22 +15,18 @@
 int on_pause_pressed();
 int on_pause_released();
 int on_imu_data();
+void arm_controller();
+void disarm_controller();
+void zero_filters();
+
 
 imu_data_t imu_data;
 
-int gyro_initialized;
-float gyro_angle;
 
-float tau = 0.5;
-float dt = .01;
-
-float prev_output_lp = 0;
-
-float prev_input_hp = 0;
-float prev_output_hp = 0;
-
+float march_theta_estimator(int reset_filter);
 float march_inner_loop(float input_curr, int reset_filter);
 float march_outer_loop(float input_curr, int reset_filter);
+void* outer_loop_runner(void* ptr);
 
 #define ENCODER_CHANNEL_L		3
 #define ENCODER_CHANNEL_R		2
@@ -38,6 +34,11 @@ float march_outer_loop(float input_curr, int reset_filter);
 #define ENCODER_POLARITY_R		-1
 #define GEARBOX 				35.577
 #define ENCODER_RES				60
+
+int controller_armed = 0;
+float phi = 0;
+float d2_u = 0;
+
 
 
 /*******************************************************************************
@@ -64,14 +65,16 @@ int main(){
 		printf("Error initializing IMU");
 		return -1;
 	}
-	gyro_initialized = 0;
 	printf("hp,lp,sum,accel,gyro\r\n");
 	fflush(stdout);
 	set_imu_interrupt_func(&on_imu_data);
 
+	// Start the outer loop thread
+	pthread_t  outer_loop_thread;
+	pthread_create(&outer_loop_thread, NULL, outer_loop_runner, (void*) NULL);
+
 	// done initializing so set state to RUNNING
 	set_state(RUNNING);
-	enable_motors();
 
 	// Keep looping until state changes to EXITING
 	while(get_state()!=EXITING){
@@ -125,6 +128,7 @@ int on_pause_pressed(){
 	for(i=0;i<samples;i++){
 		usleep(us_wait/samples);
 		if(get_pause_button() == RELEASED) return 0;
+
 	}
 	printf("long press detected, shutting down\n");
 	set_state(EXITING);
@@ -132,29 +136,16 @@ int on_pause_pressed(){
 }
 
 int on_imu_data() {
-	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
-	if (!gyro_initialized) {
-		gyro_angle = angle;
-		// Prefill inputs/outputs
-		prev_output_lp = angle;
-		prev_input_hp = angle;
-		gyro_initialized = 1;
-		// Reset filters
-		march_inner_loop(0,1);
-		march_outer_loop(0,1);
-		// Reset encoder positions
-		set_encoder_pos(ENCODER_CHANNEL_L,0);
-		set_encoder_pos(ENCODER_CHANNEL_R,0);
-	} else {
-		gyro_angle += (imu_data.gyro[0] * M_PI/(float)180)/IMU_SAMPLE_RATE;
+
+	float theta = march_theta_estimator(0);
+	theta += 0.503;
+	if ((theta < -0.37 || theta > 0.37) && controller_armed) {
+		disarm_controller();
+		printf("Tip Detected...\n");
+	} else if (!controller_armed && theta > -0.2 && theta < 0.2) {
+		arm_controller();
+		printf("Recovered from tip!\n");
 	}
-
-	// Run the new readings through the filters
-	prev_output_hp = (1 - dt/tau) * gyro_angle + (dt/tau - 1) * prev_input_hp - 
-					 (dt/tau - 1) * prev_output_hp;
-	prev_output_lp = dt/tau * angle - (dt/tau - 1) * prev_output_lp;
-	prev_input_hp = gyro_angle;
-
 
 	// collect encoder positions, right wheel is reversed 
 	float wheelAngleR = (get_encoder_pos(ENCODER_CHANNEL_R) * 2*M_PI) \
@@ -164,18 +155,19 @@ int on_imu_data() {
 	
 	// Phi is average wheel rotation also add theta body angle to get absolute 
 	// wheel position in global frame since encoders are attachde to the body
-	float phi = ((wheelAngleL+wheelAngleR)/2) + prev_output_hp+prev_output_lp+0.503; 
+	phi = ((wheelAngleL+wheelAngleR)/2) + theta;
 
-	float d2_u = march_outer_loop(-phi,0);
 
-	float d1_u = march_inner_loop(d2_u - (prev_output_lp+prev_output_hp + 0.503),0);
+	
+
+	float d1_u = march_inner_loop(d2_u - (theta),0);
 	
 
 	float dutyL = -d1_u;
 	float dutyR = -d1_u;	
 	set_motor(1, -1 * dutyL); 
 	set_motor(2, 1 * dutyR); 
-	printf("%6f %6f %6f\n",(prev_output_lp+prev_output_hp + 0.503),d2_u, d1_u);
+	printf("%6f %6f %6f\n",(theta),d2_u, d1_u);
 	fflush(stdout);
 
 	/*
@@ -183,6 +175,44 @@ int on_imu_data() {
 		prev_output_lp + prev_output_hp, angle, gyro_angle);
 	fflush(stdout);*/
 	return 0;
+}
+
+void* outer_loop_runner(void* ptr) {
+	while (get_state() != EXITING) {
+		d2_u = march_outer_loop(-phi,0);
+		usleep(1000000 / 20);
+	}
+	return NULL;
+}
+
+float march_theta_estimator(int reset_filter) {
+	static float gyro_angle;
+	static float tau = 0.5;
+	static float dt = .01;
+	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
+	static float input_prev_hp;
+	static float input_prev_lp;
+	static float output_prev_lp;
+	static float output_prev_hp;
+	if (reset_filter != 0) {
+		gyro_angle = angle;
+		// Prefill inputs/outputs
+		output_prev_lp = angle;
+		input_prev_hp = angle;
+		input_prev_lp = 0;
+		output_prev_hp = 0;
+		return angle;
+
+	} else {
+		gyro_angle += (imu_data.gyro[0] * M_PI/(float)180)/IMU_SAMPLE_RATE;
+	}
+
+	// Run the new readings through the filters
+	output_prev_hp = (1 - dt/tau) * gyro_angle + (dt/tau - 1) * input_prev_hp - 
+					 (dt/tau - 1) * output_prev_hp;
+	output_prev_lp = dt/tau * angle - (dt/tau - 1) * output_prev_lp;
+	input_prev_hp = gyro_angle;
+	return output_prev_hp + output_prev_lp;
 }
 
 // Assume 2nd order filter
@@ -229,10 +259,10 @@ float march_outer_loop(float input_curr, int reset_filter) {
 	
 	// My values
 	static float num[] = {-0.04783, 0.04783};
-	static float den[] = {1, -0.9277};
+	static float den[] = {1, -0.4545};
 	static float input_prev;
 	static float output_prev;
-	static float gain = -8*0.7;
+	static float gain = -7.5*0.5;
 	if (reset_filter != 0) {
 		input_prev = 0;
 		output_prev = 0;
@@ -247,4 +277,25 @@ float march_outer_loop(float input_curr, int reset_filter) {
 	output_prev = output_curr;
 
 	return output_curr;
+}
+
+void arm_controller() {
+	zero_filters();
+	enable_motors();
+	controller_armed = 1;
+}
+
+void disarm_controller() {
+	disable_motors();
+	controller_armed = 0;
+}
+
+void zero_filters() {
+	// Reset filters
+	march_inner_loop(0,1);
+	march_outer_loop(0,1);
+	march_theta_estimator(1);
+	// Reset encoder positions
+	set_encoder_pos(ENCODER_CHANNEL_L,0);
+	set_encoder_pos(ENCODER_CHANNEL_R,0);
 }
