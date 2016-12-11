@@ -30,6 +30,14 @@ float prev_input_hp = 0;
 float prev_output_hp = 0;
 
 float march_inner_loop(float input_curr, int reset_filter);
+float march_outer_loop(float input_curr, int reset_filter);
+
+#define ENCODER_CHANNEL_L		3
+#define ENCODER_CHANNEL_R		2
+#define ENCODER_POLARITY_L		1
+#define ENCODER_POLARITY_R		-1
+#define GEARBOX 				35.577
+#define ENCODER_RES				60
 
 
 /*******************************************************************************
@@ -131,7 +139,12 @@ int on_imu_data() {
 		prev_output_lp = angle;
 		prev_input_hp = angle;
 		gyro_initialized = 1;
+		// Reset filters
 		march_inner_loop(0,1);
+		march_outer_loop(0,1);
+		// Reset encoder positions
+		set_encoder_pos(ENCODER_CHANNEL_L,0);
+		set_encoder_pos(ENCODER_CHANNEL_R,0);
 	} else {
 		gyro_angle += (imu_data.gyro[0] * M_PI/(float)180)/IMU_SAMPLE_RATE;
 	}
@@ -142,13 +155,27 @@ int on_imu_data() {
 	prev_output_lp = dt/tau * angle - (dt/tau - 1) * prev_output_lp;
 	prev_input_hp = gyro_angle;
 
-	float d1_u = march_inner_loop(prev_output_lp+prev_output_hp + 0.503,0);
 
-	float dutyL = d1_u;
-	float dutyR = d1_u;	
+	// collect encoder positions, right wheel is reversed 
+	float wheelAngleR = (get_encoder_pos(ENCODER_CHANNEL_R) * 2*M_PI) \
+								/(ENCODER_POLARITY_R * GEARBOX * ENCODER_RES);
+	float wheelAngleL = (get_encoder_pos(ENCODER_CHANNEL_L) * 2*M_PI) \
+								/(ENCODER_POLARITY_L * GEARBOX * ENCODER_RES);
+	
+	// Phi is average wheel rotation also add theta body angle to get absolute 
+	// wheel position in global frame since encoders are attachde to the body
+	float phi = ((wheelAngleL+wheelAngleR)/2) + prev_output_hp+prev_output_lp+0.503; 
+
+	float d2_u = march_outer_loop(-phi,0);
+
+	float d1_u = march_inner_loop(d2_u - (prev_output_lp+prev_output_hp + 0.503),0);
+	
+
+	float dutyL = -d1_u;
+	float dutyR = -d1_u;	
 	set_motor(1, -1 * dutyL); 
 	set_motor(2, 1 * dutyR); 
-	printf("%6f %6f\n",prev_output_lp+prev_output_hp+.503,d1_u);
+	printf("%6f %6f %6f\n",(prev_output_lp+prev_output_hp + 0.503),d2_u, d1_u);
 	fflush(stdout);
 
 	/*
@@ -188,6 +215,35 @@ float march_inner_loop(float input_curr, int reset_filter) {
 	input_prev2 = input_prev;
 	input_prev = input_curr;
 	output_prev2 = output_prev;
+	output_prev = output_curr;
+
+	return output_curr;
+}
+
+// Assume 1st order filter
+float march_outer_loop(float input_curr, int reset_filter) {
+
+	 // James values
+	//static float num[] = { 0.3858, -0.3853 };
+	//static float den[] = { 1.0000, -0.9277 };
+	
+	// My values
+	static float num[] = {-0.04783, 0.04783};
+	static float den[] = {1, -0.9277};
+	static float input_prev;
+	static float output_prev;
+	static float gain = -8*0.7;
+	if (reset_filter != 0) {
+		input_prev = 0;
+		output_prev = 0;
+		input_curr = 0;
+	}
+
+	float output_curr = 1/den[0] * (gain*num[0]*input_curr + gain*num[1]*input_prev - den[1]*output_prev );
+	// saturate the output
+	output_curr = output_curr > .37 ? .37 : output_curr;
+	output_curr = output_curr < -.37 ? -.37 : output_curr;
+	input_prev = input_curr;
 	output_prev = output_curr;
 
 	return output_curr;
