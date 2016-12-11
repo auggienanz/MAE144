@@ -9,7 +9,7 @@
 #include <roboticscape-usefulincludes.h>
 #include <roboticscape.h>
 
-#define IMU_SAMPLE_RATE 100
+#define IMU_SAMPLE_RATE 200
 
 // function declarations
 int on_pause_pressed();
@@ -28,6 +28,8 @@ float prev_output_lp = 0;
 
 float prev_input_hp = 0;
 float prev_output_hp = 0;
+
+float march_inner_loop(float input_curr, int reset_filter);
 
 
 /*******************************************************************************
@@ -61,6 +63,7 @@ int main(){
 
 	// done initializing so set state to RUNNING
 	set_state(RUNNING);
+	enable_motors();
 
 	// Keep looping until state changes to EXITING
 	while(get_state()!=EXITING){
@@ -80,6 +83,7 @@ int main(){
 	}
 	
 	// exit cleanly
+	disable_motors();
 	power_off_imu();
 	cleanup_cape(); 
 	return 0;
@@ -127,6 +131,7 @@ int on_imu_data() {
 		prev_output_lp = angle;
 		prev_input_hp = angle;
 		gyro_initialized = 1;
+		march_inner_loop(0,1);
 	} else {
 		gyro_angle += (imu_data.gyro[0] * M_PI/(float)180)/IMU_SAMPLE_RATE;
 	}
@@ -137,21 +142,37 @@ int on_imu_data() {
 	prev_output_lp = dt/tau * angle - (dt/tau - 1) * prev_output_lp;
 	prev_input_hp = gyro_angle;
 
+	float d1_u = march_inner_loop(prev_output_lp+prev_output_hp + 0.503,0);
+
+	float dutyL = d1_u;
+	float dutyR = d1_u;	
+	set_motor(1, -1 * dutyL); 
+	set_motor(2, 1 * dutyR); 
+	printf("%6f %6f\n",prev_output_lp+prev_output_hp+.503,d1_u);
+	fflush(stdout);
+
+	/*
 	printf("%f,%f,%f,%f,%f\r\n", prev_output_hp, prev_output_lp, 
 		prev_output_lp + prev_output_hp, angle, gyro_angle);
-	fflush(stdout);
+	fflush(stdout);*/
 	return 0;
 }
 
 // Assume 2nd order filter
-float march_inner_loop(float input_curr, int reset_filter = 0) {
+float march_inner_loop(float input_curr, int reset_filter) {
 
-	static float num[] = {1, 2, 4};
-	static float den[] = {2, 3, 4};
+	/* // James values
+	static float num[] = {-6.289, 11.910, -5.634 };
+	static float den[] = { 1.000, -1.702,  0.702 };
+	*/
+	// My values
+	static float num[] = {-25.04, 45.16, -20.23};
+	static float den[] = {1, -1.434, 0.434};
 	static float input_prev;
 	static float input_prev2;
 	static float output_prev;
 	static float output_prev2;
+	static float gain = 0.25;
 	if (reset_filter != 0) {
 		input_prev = 0;
 		input_prev2 = 0;
@@ -160,7 +181,10 @@ float march_inner_loop(float input_curr, int reset_filter = 0) {
 		input_curr = 0;
 	}
 
-	float output_curr = 1/den[0] * (num[0]*input_curr + num[1]*input_prev + num[2]*input_prev2 - den[1]*output_prev - den[2]*output_prev2);
+	float output_curr = 1/den[0] * (gain*num[0]*input_curr + gain*num[1]*input_prev + gain*num[2]*input_prev2 - den[1]*output_prev - den[2]*output_prev2);
+	// saturate the output
+	output_curr = output_curr > 1 ? 1 : output_curr;
+	output_curr = output_curr < -1 ? -1 : output_curr;
 	input_prev2 = input_prev;
 	input_prev = input_curr;
 	output_prev2 = output_prev;
