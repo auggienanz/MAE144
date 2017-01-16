@@ -8,7 +8,7 @@
 #include <roboticscape-usefulincludes.h>
 #include <roboticscape.h>
 
-#define IMU_SAMPLE_RATE 20
+#define IMU_SAMPLE_RATE 20 // Hz
 
 
 // function declarations
@@ -16,6 +16,7 @@ int on_pause_pressed();
 int on_pause_released();
 int on_imu_data();
 
+// Global variables
 imu_data_t imu_data;
 int gyro_initialized;
 float gyro_angle;
@@ -110,16 +111,21 @@ int on_pause_pressed(){
 	return 0;
 }
 
+/*******************************************************************************
+* int on_imu_data() 
+*	
+* Prints two angle measurements (one from accels and one from gyros) to 
+* the screen.
+*******************************************************************************/
 int on_imu_data() {
-	float angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
+	float accel_angle = -atan2(imu_data.accel[2],imu_data.accel[1]);
 	if (!gyro_initialized) {
-		gyro_angle = angle;
+		gyro_angle = accel_angle;
 		gyro_initialized = 1;
 	} else {
 		gyro_angle += (imu_data.gyro[0] * M_PI/180)/IMU_SAMPLE_RATE;
 	}
-	printf("%f,%f\r\n",	angle,\
-					gyro_angle);
+	printf("%f,%f\r\n",	accel_angle, gyro_angle);
 	fflush(stdout);
 	return 0;
 }

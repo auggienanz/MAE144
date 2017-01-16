@@ -1,15 +1,19 @@
 /*******************************************************************************
-* complementary_filters.c
+* my_balance.c
 *
-* This is meant to be a demonstration of reading IMU data from the Robotics 
-* Cape and fusing the gyroscope and accelerometer values using complementary
-* filters.
+* This is a barebone implementation of balance code for MAE 144.
 *******************************************************************************/
 
 #include <roboticscape-usefulincludes.h>
 #include <roboticscape.h>
 
-#define IMU_SAMPLE_RATE 200
+#define IMU_SAMPLE_RATE			200
+#define ENCODER_CHANNEL_L		3
+#define ENCODER_CHANNEL_R		2
+#define ENCODER_POLARITY_L		1
+#define ENCODER_POLARITY_R		-1
+#define GEARBOX 				35.577
+#define ENCODER_RES				60
 
 // function declarations
 int on_pause_pressed();
@@ -19,27 +23,16 @@ void arm_controller();
 void disarm_controller();
 void zero_filters();
 
-
-imu_data_t imu_data;
-
-
 float march_theta_estimator(int reset_filter);
 float march_inner_loop(float input_curr, int reset_filter);
 float march_outer_loop(float input_curr, int reset_filter);
 void* outer_loop_runner(void* ptr);
 
-#define ENCODER_CHANNEL_L		3
-#define ENCODER_CHANNEL_R		2
-#define ENCODER_POLARITY_L		1
-#define ENCODER_POLARITY_R		-1
-#define GEARBOX 				35.577
-#define ENCODER_RES				60
-
+// global data
+imu_data_t imu_data;
 int controller_armed = 0;
 float phi = 0;
 float d2_u = 0;
-
-
 
 /*******************************************************************************
 * int main() 
@@ -135,6 +128,11 @@ int on_pause_pressed(){
 	return 0;
 }
 
+/*******************************************************************************
+* int on_imu_data() 
+*	
+* IMU Interrupt function
+*******************************************************************************/
 int on_imu_data() {
 
 	float theta = march_theta_estimator(0);
@@ -154,11 +152,8 @@ int on_imu_data() {
 								/(ENCODER_POLARITY_L * GEARBOX * ENCODER_RES);
 	
 	// Phi is average wheel rotation also add theta body angle to get absolute 
-	// wheel position in global frame since encoders are attachde to the body
+	// wheel position in global frame since encoders are attached to the body
 	phi = ((wheelAngleL+wheelAngleR)/2) + theta;
-
-
-	
 
 	float d1_u = march_inner_loop(d2_u - (theta),0);
 	
@@ -169,14 +164,14 @@ int on_imu_data() {
 	set_motor(2, 1 * dutyR); 
 	printf("%6f %6f %6f\n",(theta),d2_u, d1_u);
 	fflush(stdout);
-
-	/*
-	printf("%f,%f,%f,%f,%f\r\n", prev_output_hp, prev_output_lp, 
-		prev_output_lp + prev_output_hp, angle, gyro_angle);
-	fflush(stdout);*/
 	return 0;
 }
 
+/*******************************************************************************
+* void* outer_loop_runner()
+*	
+* Runs outer control loop (position stabilization) thread.
+*******************************************************************************/
 void* outer_loop_runner(void* ptr) {
 	while (get_state() != EXITING) {
 		d2_u = march_outer_loop(-phi,0);
@@ -185,6 +180,13 @@ void* outer_loop_runner(void* ptr) {
 	return NULL;
 }
 
+/*******************************************************************************
+* float march_theta_estimator() 
+*	
+* Marches the complimentary theta estimator filters. The accel data is low
+* passed and gyro data is high passed. To initialize the filter, pass in
+* reset_filter = 1. Otherwise, pass 0.
+*******************************************************************************/
 float march_theta_estimator(int reset_filter) {
 	static float gyro_angle;
 	static float tau = 0.5;
@@ -215,14 +217,13 @@ float march_theta_estimator(int reset_filter) {
 	return output_prev_hp + output_prev_lp;
 }
 
-// Assume 2nd order filter
+/*******************************************************************************
+* float march_inner_loop() 
+*	
+* Marches the inner controller loop. To initialize the filter, pass in
+* reset_filter = 1. Otherwise, pass 0.
+*******************************************************************************/
 float march_inner_loop(float input_curr, int reset_filter) {
-
-	/* // James values
-	static float num[] = {-6.289, 11.910, -5.634 };
-	static float den[] = { 1.000, -1.702,  0.702 };
-	*/
-	// My values
 	static float num[] = {-25.04, 45.16, -20.23};
 	static float den[] = {1, -1.434, 0.434};
 	static float input_prev;
@@ -250,14 +251,13 @@ float march_inner_loop(float input_curr, int reset_filter) {
 	return output_curr;
 }
 
-// Assume 1st order filter
+/*******************************************************************************
+* float march_outer_loop() 
+*	
+* Marches the outer controller loop. To initialize the filter, pass in
+* reset_filter = 1. Otherwise, pass 0.
+*******************************************************************************/
 float march_outer_loop(float input_curr, int reset_filter) {
-
-	 // James values
-	//static float num[] = { 0.3858, -0.3853 };
-	//static float den[] = { 1.0000, -0.9277 };
-	
-	// My values
 	static float num[] = {-0.04783, 0.04783};
 	static float den[] = {1, -0.4545};
 	static float input_prev;
@@ -279,17 +279,32 @@ float march_outer_loop(float input_curr, int reset_filter) {
 	return output_curr;
 }
 
+/*******************************************************************************
+* void arm_controller() 
+*	
+* Zeros all filters and enables the motor controller.
+*******************************************************************************/
 void arm_controller() {
 	zero_filters();
 	enable_motors();
 	controller_armed = 1;
 }
 
+/*******************************************************************************
+* void disarm_controller() 
+*	
+* Disables output to motors.
+*******************************************************************************/
 void disarm_controller() {
 	disable_motors();
 	controller_armed = 0;
 }
 
+/*******************************************************************************
+* void zero_filters() 
+*	
+* Zeros all filters and resets encoder positions to 0.
+*******************************************************************************/
 void zero_filters() {
 	// Reset filters
 	march_inner_loop(0,1);
